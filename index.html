@@ -84,9 +84,9 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
 <section class="panel" id="p-img">
   <div class="controls">
     <div class="field"><label for="img-res">解析度（長邊）<output id="img-res-o"></output></label>
-      <input type="range" id="img-res" min="32" max="384" step="8" value="256"></div>
+      <input type="range" id="img-res" min="32" max="512" step="8" value="256"></div>
     <div class="field"><label for="img-terms">公式項數 <output id="img-terms-o"></output></label>
-      <input type="range" id="img-terms" min="500" max="60000" step="500" value="20000"></div>
+      <input type="range" id="img-terms" min="1000" max="200000" step="1000" value="40000"></div>
   </div>
   <div class="row">
     <label class="btn primary file">選擇照片<input type="file" id="img-file" accept="image/*"></label>
@@ -244,7 +244,7 @@ function pick({ A, imp, n, sorted }, W, K) {
     const list = [];
     for (let i = 0; i < n; i++) {
       if (imp[c * n + i] < thr) continue;
-      const q = Math.round(A[c][i] * 10) / 10;
+      const q = Math.round(A[c][i] * 100) / 100;
       if (q !== 0) list.push([i % W, (i / W) | 0, q, imp[c * n + i]]);
     }
     list.sort((p, q) => q[3] - p[3]);
@@ -354,20 +354,21 @@ function sampleImage() {       // a small drawn scene so the page opens with som
 }
 async function encodeImage() {
   const job = ++img.job, src = img.source;
-  const [W, H] = fit(src.width, src.height, +$("img-res").value), K = +$("img-terms").value;
+  const [W, H] = fit(src.width, src.height, Math.min(+$("img-res").value, Math.max(src.width, src.height))), K = +$("img-terms").value;
   const cs = $("img-src"), co = $("img-out"); cs.width = co.width = W; cs.height = co.height = H;
   const g = cs.getContext("2d", { willReadFrequently: true }); g.drawImage(src, 0, 0, W, H);
   const px = g.getImageData(0, 0, W, H).data;
   if (!img.ana || img.ana.src !== src || img.ana.W !== W || img.ana.H !== H) img.ana = { src, W, H, a: analyze(px, W, H) };
   const fr = pick(img.ana.a, W, K), out = renderFrame(fr, W, H);
   co.getContext("2d").putImageData(out, 0, 0);
-  let se = 0; for (let i = 0; i < px.length; i++) if ((i & 3) !== 3) { const d = px[i] - out.data[i]; se += d * d; }
+  let se = 0, ae = 0; for (let i = 0; i < px.length; i++) if ((i & 3) !== 3) { const d = px[i] - out.data[i]; se += d * d; ae += Math.abs(d); }
+  const sim = 100 * (1 - ae / (W * H * 3) / 255);
   const psnr = 10 * Math.log10(255 * 255 / Math.max(se / (W * H * 3), 1e-9));
   const terms = CH.reduce((s, k) => s + fr[k].length, 0), plain = toText([fr], W, H, 0);
   const text = plain;
   if (job !== img.job) return;
   img.text = text; $("img-text").value = preview(text);
-  $("img-stats").innerHTML = `<b>${W}×${H}</b> 像素　<b>${terms}</b> 項　公式長 <b>${kb(text.length)}</b>　相似度 PSNR <b>${psnr.toFixed(1)} dB</b>`;
+  $("img-stats").innerHTML = `<b>${W}×${H}</b> 像素　<b>${terms}</b> 項　公式長 <b>${kb(text.length)}</b>　與原圖相似度 <b>${sim.toFixed(1)}%</b>（PSNR ${psnr.toFixed(1)} dB）`;
 }
 function scheduleImage() { clearTimeout(img.timer); img.timer = setTimeout(encodeImage, 120); }
 bindRange("img-res", v => v + " px", scheduleImage);
