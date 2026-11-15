@@ -147,10 +147,19 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
 
 <section class="panel" id="p-ggb" hidden>
   <div class="row" id="ggb-mode" role="group" aria-label="畫法">
-    <button class="btn" data-m="line" aria-pressed="true">線條</button>
+    <button class="btn" data-m="fill" aria-pressed="true">彩色色塊</button>
+    <button class="btn" data-m="line" aria-pressed="false">線條</button>
     <button class="btn" data-m="dot" aria-pressed="false">圓點</button>
   </div>
-  <div class="controls" id="ggb-line-ctl">
+  <div class="controls" id="ggb-fill-ctl">
+    <div class="field"><label for="ggb-colors">顏色數 <output id="ggb-colors-o"></output></label>
+      <input type="range" id="ggb-colors" min="4" max="48" step="2" value="16"></div>
+    <div class="field"><label for="ggb-fdetail">曲線細節 <output id="ggb-fdetail-o"></output></label>
+      <input type="range" id="ggb-fdetail" min="1" max="10" step="1" value="5"></div>
+    <div class="field"><label for="ggb-minarea">最小色塊 <output id="ggb-minarea-o"></output></label>
+      <input type="range" id="ggb-minarea" min="4" max="60" step="2" value="12"></div>
+  </div>
+  <div class="controls" id="ggb-line-ctl" hidden>
     <div class="field"><label for="ggb-edge">線條量 <output id="ggb-edge-o"></output></label>
       <input type="range" id="ggb-edge" min="4" max="30" step="1" value="16"></div>
     <div class="field"><label for="ggb-detail">曲線細節 <output id="ggb-detail-o"></output></label>
@@ -174,7 +183,7 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
     <button class="btn" id="ggb-save">存成 .txt</button>
     <a class="btn" href="https://www.geogebra.org/classic" target="_blank" rel="noopener">開啟 GeoGebra</a>
   </div>
-  <p class="note">用法：開啟 GeoGebra Classic，把整段指令貼進下方的輸入列按 Enter，等它算完。「線條」會描出圖裡的邊緣，每條輪廓是一條由 cos、sin 組成的參數曲線；「圓點」是每個格點畫一個圓，越暗圓越大。</p>
+  <p class="note">用法：開啟 GeoGebra Classic，把整段指令貼進下方的輸入列按 Enter，等它算完。「彩色色塊」把圖分成許多色塊，每塊的邊界是一條由 cos、sin 組成的參數曲線並填上顏色；「線條」會描出圖裡的邊緣，每條輪廓是一條由 cos、sin 組成的參數曲線；「圓點」是每個格點畫一個圓，越暗圓越大。</p>
 </section>
 
 <p class="note">所有運算都在你的瀏覽器裡完成，不會上傳。</p>
@@ -375,9 +384,119 @@ $("img-save").addEventListener("click", () => saveFile("formula-image.txt", new 
 $("img-send").addEventListener("click", () => sendToDecode(img.text));
 
 /* ---------- GeoGebra halftone ---------- */
-const ggb = { text: "", timer: 0, ana: null, mode: "line", edge: null };
+const ggb = { text: "", timer: 0, ana: null, mode: "fill", edge: null, quant: null };
 function setGgb(text, stats) { ggb.text = text; $("ggb-text").value = preview(text); $("ggb-stats").innerHTML = stats; }
-function encodeGgb() { return ggb.mode === "line" ? encodeGgbLines() : encodeGgbDots(); }
+function encodeGgb() { return ggb.mode === "fill" ? encodeGgbFill() : ggb.mode === "line" ? encodeGgbLines() : encodeGgbDots(); }
+
+// Picture -> N flat colours (k-means), cached per source image and N
+function quantize(src, N) {
+  if (ggb.quant && ggb.quant.src === src && ggb.quant.N === N) return ggb.quant;
+  const [W, H] = fit(src.width, src.height, 320), n = W * H;
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(src, 0, 0, W, H);
+  const px = g.getImageData(0, 0, W, H).data;
+  const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => (px[4 * a] * 2 + px[4 * a + 1] * 4 + px[4 * a + 2]) - (px[4 * b] * 2 + px[4 * b + 1] * 4 + px[4 * b + 2]));
+  const cen = new Float32Array(N * 3);
+  for (let k = 0; k < N; k++) { const i = order[Math.floor((k + .5) * n / N)]; cen.set([px[4 * i], px[4 * i + 1], px[4 * i + 2]], 3 * k); }
+  let lab = new Uint8Array(n);
+  for (let it = 0; it < 12; it++) {
+    const sum = new Float64Array(N * 4);
+    for (let i = 0; i < n; i++) {
+      const r = px[4 * i], gg = px[4 * i + 1], b = px[4 * i + 2]; let best = 0, bd = 1e12;
+      for (let k = 0; k < N; k++) { const dr = r - cen[3 * k], dg = gg - cen[3 * k + 1], db = b - cen[3 * k + 2], d = dr * dr + dg * dg + db * db; if (d < bd) { bd = d; best = k; } }
+      lab[i] = best; sum[4 * best] += r; sum[4 * best + 1] += gg; sum[4 * best + 2] += b; sum[4 * best + 3]++;
+    }
+    for (let k = 0; k < N; k++) if (sum[4 * k + 3]) for (let j = 0; j < 3; j++) cen[3 * k + j] = sum[4 * k + j] / sum[4 * k + 3];
+  }
+  return ggb.quant = { src, N, W, H, px, lab, pal: Array.from({ length: N }, (_, k) => [cen[3 * k], cen[3 * k + 1], cen[3 * k + 2]].map(Math.round)) };
+}
+// Fold regions smaller than minArea into the touching region with the closest colour
+function mergeSmall(lab0, W, H, pal, minArea) {
+  const n = W * H, lab = Uint8Array.from(lab0), comp = new Int32Array(n), stack = new Int32Array(n);
+  const dist = (a, b) => (pal[a][0] - pal[b][0]) ** 2 + (pal[a][1] - pal[b][1]) ** 2 + (pal[a][2] - pal[b][2]) ** 2;
+  for (let pass = 0; pass < 8; pass++) {
+    comp.fill(-1); let changed = false;
+    for (let s0 = 0; s0 < n; s0++) {
+      if (comp[s0] >= 0) continue;
+      const L = lab[s0], mem = []; let sp = 0; stack[sp++] = s0; comp[s0] = s0; let best = -1, bd = 1e12;
+      while (sp) {
+        const i = stack[--sp], x = i % W, y = (i / W) | 0; mem.push(i);
+        for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1]) {
+          if (j < 0) continue;
+          if (lab[j] === L) { if (comp[j] < 0) { comp[j] = s0; stack[sp++] = j; } }
+          else { const d = dist(L, lab[j]); if (d < bd) { bd = d; best = lab[j]; } }
+        }
+      }
+      if (mem.length < minArea && best >= 0) { for (const i of mem) lab[i] = best; changed = true; }
+    }
+    if (!changed) break;
+  }
+  return lab;
+}
+// Connected same-colour regions -> outer boundary loops, biggest first
+function regions(lab, W, H, minArea, px) {
+  const n = W * H, comp = new Int32Array(n).fill(-1), stack = new Int32Array(n), out = [];
+  for (let s0 = 0; s0 < n; s0++) {
+    if (comp[s0] >= 0) continue;
+    const id = out.length + 0, L = lab[s0]; let sp = 0, cnt = 0, x0 = W, x1 = 0, y0 = H, y1 = 0; const mem = [];
+    stack[sp++] = s0; comp[s0] = s0;
+    while (sp) {
+      const i = stack[--sp], x = i % W, y = (i / W) | 0; cnt++; mem.push(i);
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && comp[i - 1] < 0 && lab[i - 1] === L) { comp[i - 1] = s0; stack[sp++] = i - 1; }
+      if (x < W - 1 && comp[i + 1] < 0 && lab[i + 1] === L) { comp[i + 1] = s0; stack[sp++] = i + 1; }
+      if (y > 0 && comp[i - W] < 0 && lab[i - W] === L) { comp[i - W] = s0; stack[sp++] = i - W; }
+      if (y < H - 1 && comp[i + W] < 0 && lab[i + W] === L) { comp[i + W] = s0; stack[sp++] = i + W; }
+    }
+    if (cnt < minArea) continue;
+    const w = x1 - x0 + 1, h = y1 - y0 + 1, mask = new Float32Array(w * h);
+    for (const i of mem) mask[((i / W | 0) - y0) * w + (i % W - x0)] = 2;
+    let best = null, bestA = 0;
+    for (const lp of traceLoops(mask, w, h, 1)) {
+      let a = 0; for (let j = 0; j < lp.length; j++) { const p = lp[j], q = lp[(j + 1) % lp.length]; a += p[0] * q[1] - q[0] * p[1]; }
+      a = Math.abs(a) / 2; if (a > bestA) { bestA = a; best = lp; }
+    }
+    if (!best) continue;
+    let cr = 0, cg = 0, cb = 0; for (const i of mem) { cr += px[4 * i]; cg += px[4 * i + 1]; cb += px[4 * i + 2]; }
+    out.push({ color: [cr, cg, cb].map(v => Math.round(v / cnt)), area: bestA, loop: best.map(p => [p[0] + x0 + .5, p[1] + y0 + .5]) });
+  }
+  return out.sort((a, b) => b.area - a.area);
+}
+function curvePath(g, c, S) {
+  const N = Math.max(48, c.cx.length * 8); g.beginPath();
+  for (let j = 0; j < N; j++) {
+    const t = 2 * Math.PI * j / N; let x = c.x0, y = c.y0;
+    for (const [k, a, b] of c.cx) x += a * Math.cos(k * t) + b * Math.sin(k * t);
+    for (const [k, a, b] of c.cy) y += a * Math.cos(k * t) + b * Math.sin(k * t);
+    j ? g.lineTo(x * S, y * S) : g.moveTo(x * S, y * S);
+  }
+  g.closePath();
+}
+function encodeGgbFill() {
+  const q = quantize(img.source, +$("ggb-colors").value), { W, H, px, pal } = q, perPx = +$("ggb-fdetail").value * 0.06;
+  const minArea = +$("ggb-minarea").value, dark = pal.reduce((a, b) => (a[0] + a[1] + a[2] <= b[0] + b[1] + b[2] ? a : b));
+  const regs = regions(mergeSmall(q.lab, W, H, pal, minArea), W, H, minArea, px).map(r => ({ color: r.color, c: fourierCurve(r.loop, perPx) })).filter(r => r.c);
+  const draw = (cv, S) => {
+    const g = cv.getContext("2d", { willReadFrequently: true }); g.fillStyle = `rgb(${dark})`; g.fillRect(0, 0, cv.width, cv.height); g.lineWidth = Math.max(1, S); g.lineJoin = "round";
+    for (const r of regs) { g.fillStyle = g.strokeStyle = `rgb(${r.color})`; curvePath(g, r.c, S); g.fill(); g.stroke(); }
+    return g;
+  };
+  const S = 720 / Math.max(W, H), cv = $("ggb-out"); cv.width = Math.round(W * S); cv.height = Math.round(H * S); draw(cv, S);
+  const small = document.createElement("canvas"); small.width = W; small.height = H;
+  const out = draw(small, 1).getImageData(0, 0, W, H).data; let err = 0;
+  for (let i = 0; i < out.length; i++) if ((i & 3) !== 3) err += Math.abs(out[i] - px[i]);
+  const sim = 100 * (1 - err / (W * H * 3) / 255);
+  const col = c => c.map(v => Math.round(v / 255 * 1000) / 1000).join(","), sq = f => `(abs(2${f}(t)+1)-abs(2${f}(t)-1))`;
+  const cmds = [`r0=Curve(${W / 2}+${W / 4}${sq("cos")},${H / 2}+${H / 4}${sq("sin")},t,0,2pi)`, `SetColor(r0,${col(dark)})`]; let terms = 0;
+  regs.forEach((r, i) => {
+    const [fx, nx] = seriesText(r.c.x0, r.c.cx, 1), [fy, ny] = seriesText(Math.round((H - r.c.y0) * 100) / 100, r.c.cy, -1);
+    terms += nx + ny + 2; cmds.push(`r${i + 1}=Curve(${fx},${fy},t,0,2pi)`, `SetColor(r${i + 1},${col(r.color)})`);
+  });
+  for (let i = 0; i <= regs.length; i++) cmds.push(`SetFilling(r${i},1)`);
+  cmds.push(`ShowAxes(false)`, `ShowGrid(false)`, `ZoomIn(-5,-5,${W + 5},${H + 5})`);
+  const text = "Execute({" + cmds.map(c => '"' + c.replace(/"/g, '""') + '"').join(",") + "})";
+  setGgb(text, `<b>${regs.length}</b> 個色塊　<b>${pal.length}</b> 色　共 <b>${terms}</b> 項　指令長 <b>${kb(text.length)}</b>　與原圖相似度 <b>${sim.toFixed(1)}%</b>`);
+}
 
 // Edge strength of the picture (blurred greyscale -> Sobel), cached per source image
 function edgeMap(src) {
@@ -441,7 +560,7 @@ function traceLoops(F, W, H, T) {
 function fourierCurve(loop, perPx) {
   const n = loop.length, cum = [0];
   for (let i = 0; i < n; i++) { const p = loop[i], q = loop[(i + 1) % n]; cum.push(cum[i] + Math.hypot(q[0] - p[0], q[1] - p[1])); }
-  const len = cum[n]; if (len < 14) return null;
+  const len = cum[n]; if (len < 5) return null;
   const M = Math.min(4096, Math.max(32, Math.round(len * 2))), xs = new Float32Array(M), ys = new Float32Array(M);
   for (let j = 0, i = 0; j < M; j++) {
     const s = len * j / M; while (cum[i + 1] < s) i++;
@@ -517,12 +636,15 @@ function encodeGgbDots() {
   setGgb(text, `<b>${W}×${H}</b> 格＝<b>${n}</b> 個圓　<b>${Y.length}</b> 項　指令長 <b>${kb(ggb.text.length)}</b>　GeoGebra 約需 <b>${secs < 90 ? Math.max(1, Math.round(secs)) + " 秒" : Math.round(secs / 60) + " 分鐘"}</b>`);
 }
 function scheduleGgb() { clearTimeout(ggb.timer); ggb.timer = setTimeout(encodeGgb, 120); }
+bindRange("ggb-colors", v => v + " 色", scheduleGgb);
+bindRange("ggb-fdetail", v => String(v), scheduleGgb);
+bindRange("ggb-minarea", v => v + " px", scheduleGgb);
 bindRange("ggb-edge", v => v + " %", scheduleGgb);
 bindRange("ggb-detail", v => String(v), scheduleGgb);
 document.querySelectorAll("#ggb-mode button").forEach(b => b.addEventListener("click", () => {
   ggb.mode = b.dataset.m;
   document.querySelectorAll("#ggb-mode button").forEach(o => o.setAttribute("aria-pressed", o === b));
-  $("ggb-line-ctl").hidden = ggb.mode !== "line"; $("ggb-dot-ctl").hidden = ggb.mode !== "dot"; encodeGgb();
+  $("ggb-fill-ctl").hidden = ggb.mode !== "fill"; $("ggb-line-ctl").hidden = ggb.mode !== "line"; $("ggb-dot-ctl").hidden = ggb.mode !== "dot"; encodeGgb();
 }));
 bindRange("ggb-res", v => v + " 格", scheduleGgb);
 bindRange("ggb-terms", v => v + " 項", scheduleGgb);
