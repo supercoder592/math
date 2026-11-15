@@ -40,8 +40,6 @@ header p{margin:6px 0 0;color:var(--muted);max-width:38em}
 .field label{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
 .field output{color:var(--ink);font:600 13px var(--f-mono);font-variant-numeric:tabular-nums}
 input[type=range]{width:100%;accent-color:var(--accent)}
-input[type=password],input[type=text]{font:14px var(--f-body);padding:8px 10px;border:1px solid var(--line);border-radius:4px;
-  background:var(--sheet);color:var(--ink);width:100%}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .btn{font:500 14px var(--f-body);padding:9px 14px;border-radius:4px;border:1px solid var(--line);background:var(--surface);
   color:var(--ink);cursor:pointer;display:inline-flex;align-items:center}
@@ -87,8 +85,6 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
       <input type="range" id="img-res" min="32" max="256" step="8" value="128"></div>
     <div class="field"><label for="img-terms">公式項數 <output id="img-terms-o"></output></label>
       <input type="range" id="img-terms" min="100" max="20000" step="100" value="3000"></div>
-    <div class="field"><label for="img-pw">密碼（選填）</label>
-      <input type="password" id="img-pw" placeholder="留空＝不加密" autocomplete="off"></div>
   </div>
   <div class="row">
     <label class="btn primary file">選擇照片<input type="file" id="img-file" accept="image/*"></label>
@@ -115,8 +111,6 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
       <input type="range" id="vid-terms" min="100" max="3000" step="50" value="500"></div>
     <div class="field"><label for="vid-fps">每秒幀數 <output id="vid-fps-o"></output></label>
       <input type="range" id="vid-fps" min="2" max="15" step="1" value="8"></div>
-    <div class="field"><label for="vid-pw">密碼（選填）</label>
-      <input type="password" id="vid-pw" placeholder="留空＝不加密" autocomplete="off"></div>
   </div>
   <div class="row">
     <label class="btn primary file">選擇影片<input type="file" id="vid-file" accept="video/*"></label>
@@ -135,10 +129,6 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
 
 <section class="panel" id="p-dec" hidden>
   <textarea id="dec-text" aria-label="貼上公式" placeholder="把公式貼在這裡，或用下面的按鈕載入 .txt 檔。"></textarea>
-  <div class="controls">
-    <div class="field"><label for="dec-pw">密碼（公式有加密才需要）</label>
-      <input type="password" id="dec-pw" autocomplete="off"></div>
-  </div>
   <div class="row">
     <button class="btn primary" id="dec-go">依公式繪製</button>
     <label class="btn file">載入 .txt<input type="file" id="dec-file" accept=".txt,text/plain"></label>
@@ -153,7 +143,7 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
   </div>
 </section>
 
-<p class="note">公式本身只是編碼，不是加密：沒設密碼時，任何拿到公式的人都能還原。設了密碼，公式會先用 AES‑256‑GCM 加密成密文再輸出。所有運算都在你的瀏覽器裡完成，不會上傳。</p>
+<p class="note">所有運算都在你的瀏覽器裡完成，不會上傳。</p>
 </main>
 
 <script>
@@ -273,33 +263,6 @@ function parseText(text) {
   return { W, H, fps, frames };
 }
 
-/* ---------- optional password (AES-256-GCM, PBKDF2) ---------- */
-const ENC = "ENC-FX1:";
-async function keyFor(pw, salt) {
-  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 200000, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-}
-function b64(bytes) { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); }
-function unb64(s) { const b = atob(s.replace(/\s+/g, "")), o = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) o[i] = b.charCodeAt(i); return o; }
-async function lock(text, pw) {
-  if (!pw) return text;
-  if (!crypto.subtle) throw new Error("這個瀏覽器環境不支援加密（需要 https）。");
-  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await keyFor(pw, salt), new TextEncoder().encode(text)));
-  const all = new Uint8Array(28 + ct.length); all.set(salt); all.set(iv, 16); all.set(ct, 28);
-  return ENC + b64(all);
-}
-async function unlock(text, pw) {
-  text = text.trim();
-  if (!text.startsWith(ENC)) return text;
-  if (!pw) throw new Error("這份公式有加密，請輸入密碼。");
-  let all; try { all = unb64(text.slice(ENC.length)); } catch { throw new Error("密文不完整，請確認整段都有貼上。"); }
-  try {
-    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: all.subarray(16, 28) }, await keyFor(pw, all.subarray(0, 16)), all.subarray(28));
-    return new TextDecoder().decode(pt);
-  } catch { throw new Error("密碼不對，或密文被改過。"); }
-}
-
 /* ---------- helpers ---------- */
 function fit(w, h, res) { const s = res / Math.max(w, h); return [Math.max(8, Math.round(w * s)), Math.max(8, Math.round(h * s))]; }
 function say(el, text, err) { el.textContent = text; el.classList.toggle("err", !!err); }
@@ -353,15 +316,14 @@ async function encodeImage() {
   let se = 0; for (let i = 0; i < px.length; i++) if ((i & 3) !== 3) { const d = px[i] - out.data[i]; se += d * d; }
   const psnr = 10 * Math.log10(255 * 255 / Math.max(se / (W * H * 3), 1e-9));
   const terms = CH.reduce((s, k) => s + fr[k].length, 0), plain = toText([fr], W, H, 0);
-  let text; try { text = await lock(plain, $("img-pw").value); } catch (e) { say($("img-msg"), e.message, true); text = plain; }
+  const text = plain;
   if (job !== img.job) return;
   img.text = text; $("img-text").value = preview(text);
-  $("img-stats").innerHTML = `<b>${W}×${H}</b> 像素　<b>${terms}</b> 項　公式長 <b>${kb(text.length)}</b>　相似度 PSNR <b>${psnr.toFixed(1)} dB</b>` + ($("img-pw").value ? "　已加密" : "");
+  $("img-stats").innerHTML = `<b>${W}×${H}</b> 像素　<b>${terms}</b> 項　公式長 <b>${kb(text.length)}</b>　相似度 PSNR <b>${psnr.toFixed(1)} dB</b>`;
 }
 function scheduleImage() { clearTimeout(img.timer); img.timer = setTimeout(encodeImage, 120); }
 bindRange("img-res", v => v + " px", scheduleImage);
 bindRange("img-terms", v => v + " 項", scheduleImage);
-$("img-pw").addEventListener("input", scheduleImage);
 $("img-file").addEventListener("change", e => {
   const f = e.target.files[0]; if (!f) return;
   const im = new Image(), url = URL.createObjectURL(f);
@@ -371,7 +333,7 @@ $("img-file").addEventListener("change", e => {
 });
 $("img-copy").addEventListener("click", () => copyText(img.text, $("img-msg")));
 $("img-save").addEventListener("click", () => saveFile("formula-image.txt", new Blob([img.text], { type: "text/plain" })));
-$("img-send").addEventListener("click", () => sendToDecode(img.text, $("img-pw").value));
+$("img-send").addEventListener("click", () => sendToDecode(img.text));
 
 /* ---------- video -> formula ---------- */
 const vid = { text: "", busy: false };
@@ -403,9 +365,9 @@ $("vid-file").addEventListener("change", async e => {
       prog.value = i + 1; say(msg, `計算中：第 ${i + 1} / ${N} 幀`);
       await new Promise(r => setTimeout(r));
     }
-    vid.text = await lock(toText(parts, W, H, fps), $("vid-pw").value);
+    vid.text = toText(parts, W, H, fps);
     $("vid-text").value = preview(vid.text);
-    $("vid-stats").innerHTML = `<b>${W}×${H}</b> 像素　<b>${N}</b> 幀 @ ${fps} fps　共 <b>${terms}</b> 項　公式長 <b>${kb(vid.text.length)}</b>` + ($("vid-pw").value ? "　已加密" : "");
+    $("vid-stats").innerHTML = `<b>${W}×${H}</b> 像素　<b>${N}</b> 幀 @ ${fps} fps　共 <b>${terms}</b> 項　公式長 <b>${kb(vid.text.length)}</b>`;
     ["vid-copy", "vid-save", "vid-send"].forEach(id => $(id).disabled = false);
     say(msg, `完成：${f.name}` + (dur * fps > 240 ? "（只取前 240 幀）" : ""));
   } catch (err) { say(msg, err.message || String(err), true); }
@@ -413,13 +375,13 @@ $("vid-file").addEventListener("change", async e => {
 });
 $("vid-copy").addEventListener("click", () => copyText(vid.text, $("vid-msg")));
 $("vid-save").addEventListener("click", () => saveFile("formula-video.txt", new Blob([vid.text], { type: "text/plain" })));
-$("vid-send").addEventListener("click", () => sendToDecode(vid.text, $("vid-pw").value));
+$("vid-send").addEventListener("click", () => sendToDecode(vid.text));
 
 /* ---------- formula -> picture / video ---------- */
 const dec = { big: null, data: null, cache: [], i: 0, timer: 0, playing: false };
 function setDecodeText(t) { dec.big = t.length > BIG ? t : null; $("dec-text").value = preview(t); }
 $("dec-text").addEventListener("input", () => dec.big = null);
-function sendToDecode(text, pw) { setDecodeText(text); $("dec-pw").value = pw || ""; showTab("tab-dec"); decode(); }
+function sendToDecode(text) { setDecodeText(text); showTab("tab-dec"); decode(); }
 $("dec-file").addEventListener("change", async e => {
   const f = e.target.files[0]; if (!f) return;
   setDecodeText(await f.text()); say($("dec-msg"), `已載入 ${f.name}`); e.target.value = ""; decode();
@@ -437,7 +399,7 @@ async function decode() {
     stopPlay();
     const raw = dec.big || $("dec-text").value;
     if (!raw.trim()) throw new Error("請先貼上公式。");
-    const d = parseText(await unlock(raw, $("dec-pw").value));
+    const d = parseText(raw);
     dec.data = d; dec.cache = []; dec.i = 0;
     const c = $("dec-out"); c.width = d.W; c.height = d.H;
     c.getContext("2d").putImageData(frameAt(0), 0, 0);
