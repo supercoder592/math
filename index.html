@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!--APP-HEAD-->
+<title>公式畫</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@700&display=swap">
+<style>
+/* Layout: one narrow working column, like a worksheet — controls, then picture pair, then the formula sheet. */
+:root{
+  --bg:#eef2f6; --surface:#ffffff; --ink:#15212e; --muted:#5b6b7c; --line:#cfd8e2;
+  --accent:#1a56c4; --accent-ink:#ffffff; --sheet:#f8fafc; --warn:#a4480b;
+  --f-display:"Noto Serif TC","Songti TC",serif;
+  --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0e141b; --surface:#17202a; --ink:#e6edf4; --muted:#93a3b4; --line:#2b3948;
+  --accent:#6ea4ff; --accent-ink:#0b1420; --sheet:#111922; --warn:#f0a35e; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0e141b; --surface:#17202a; --ink:#e6edf4; --muted:#93a3b4; --line:#2b3948;
+  --accent:#6ea4ff; --accent-ink:#0b1420; --sheet:#111922; --warn:#f0a35e; color-scheme:dark }
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 var(--f-body);
+  padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+header h1{font:700 30px/1.2 var(--f-display);margin:0;letter-spacing:.04em}
+header p{margin:6px 0 0;color:var(--muted);max-width:38em}
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--line)}
+.tabs button{flex:1;min-width:0;background:none;border:0;border-bottom:3px solid transparent;color:var(--muted);
+  font:500 15px var(--f-body);padding:10px 4px;cursor:pointer}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.panel{display:flex;flex-direction:column;gap:16px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 20px;
+  background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field label{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.field output{color:var(--ink);font:600 13px var(--f-mono);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--accent)}
+input[type=password],input[type=text]{font:14px var(--f-body);padding:8px 10px;border:1px solid var(--line);border-radius:4px;
+  background:var(--sheet);color:var(--ink);width:100%}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font:500 14px var(--f-body);padding:9px 14px;border-radius:4px;border:1px solid var(--line);background:var(--surface);
+  color:var(--ink);cursor:pointer;display:inline-flex;align-items:center}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn:focus-visible,.tabs button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.file input{position:absolute;opacity:0;width:1px;height:1px}
+.file:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+figure{margin:0;display:flex;flex-direction:column;gap:6px;min-width:0}
+figcaption{font-size:12px;color:var(--muted);letter-spacing:.08em}
+canvas{width:100%;height:auto;display:block;background:var(--sheet);border:1px solid var(--line)}
+.solo{max-width:520px}
+.stats{font:13px var(--f-mono);color:var(--muted);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.stats b{color:var(--ink);font-weight:600}
+textarea{width:100%;min-height:220px;resize:vertical;font:12px/1.55 var(--f-mono);padding:12px;border:1px solid var(--line);
+  border-radius:4px;background:var(--sheet);color:var(--ink);overflow-wrap:anywhere}
+.msg{font-size:13px;color:var(--muted);min-height:1.4em}
+.msg.err{color:var(--warn)}
+progress{width:100%;height:8px;accent-color:var(--accent)}
+.note{font-size:13px;color:var(--muted);margin:0}
+@media (max-width:420px){ header h1{font-size:26px} .tabs button{font-size:14px} }
+</style>
+<!--/APP-HEAD-->
+</head>
+<body>
+<!--APP-BODY-->
+<main>
+<header>
+  <h1>公式畫</h1>
+  <p>把照片或影片換成一串餘弦公式，再用公式把畫面算回來。把公式傳給對方，對方貼上就能還原。</p>
+</header>
+
+<div class="tabs" role="tablist">
+  <button role="tab" id="tab-img" aria-selected="true" data-p="p-img">圖片 → 公式</button>
+  <button role="tab" id="tab-vid" aria-selected="false" data-p="p-vid">影片 → 公式</button>
+  <button role="tab" id="tab-dec" aria-selected="false" data-p="p-dec">公式 → 還原</button>
+</div>
+
+<section class="panel" id="p-img">
+  <div class="controls">
+    <div class="field"><label for="img-res">解析度（長邊）<output id="img-res-o"></output></label>
+      <input type="range" id="img-res" min="32" max="256" step="8" value="128"></div>
+    <div class="field"><label for="img-terms">公式項數 <output id="img-terms-o"></output></label>
+      <input type="range" id="img-terms" min="100" max="20000" step="100" value="3000"></div>
+    <div class="field"><label for="img-pw">密碼（選填）</label>
+      <input type="password" id="img-pw" placeholder="留空＝不加密" autocomplete="off"></div>
+  </div>
+  <div class="row">
+    <label class="btn primary file">選擇照片<input type="file" id="img-file" accept="image/*"></label>
+    <span class="msg" id="img-msg">目前顯示的是範例圖。</span>
+  </div>
+  <div class="pair">
+    <figure><canvas id="img-src"></canvas><figcaption>原圖</figcaption></figure>
+    <figure><canvas id="img-out"></canvas><figcaption>用公式算出來的</figcaption></figure>
+  </div>
+  <div class="stats" id="img-stats"></div>
+  <textarea id="img-text" readonly aria-label="圖片的公式"></textarea>
+  <div class="row">
+    <button class="btn" id="img-copy">複製公式</button>
+    <button class="btn" id="img-save">存成 .txt</button>
+    <button class="btn" id="img-send">拿去還原 →</button>
+  </div>
+</section>
+
+<section class="panel" id="p-vid" hidden>
+  <div class="controls">
+    <div class="field"><label for="vid-res">解析度（長邊）<output id="vid-res-o"></output></label>
+      <input type="range" id="vid-res" min="32" max="128" step="8" value="64"></div>
+    <div class="field"><label for="vid-terms">每幀項數 <output id="vid-terms-o"></output></label>
+      <input type="range" id="vid-terms" min="100" max="3000" step="50" value="500"></div>
+    <div class="field"><label for="vid-fps">每秒幀數 <output id="vid-fps-o"></output></label>
+      <input type="range" id="vid-fps" min="2" max="15" step="1" value="8"></div>
+    <div class="field"><label for="vid-pw">密碼（選填）</label>
+      <input type="password" id="vid-pw" placeholder="留空＝不加密" autocomplete="off"></div>
+  </div>
+  <div class="row">
+    <label class="btn primary file">選擇影片<input type="file" id="vid-file" accept="video/*"></label>
+    <span class="msg" id="vid-msg">最多處理前 240 幀（8 fps 約 30 秒）。</span>
+  </div>
+  <progress id="vid-prog" value="0" max="1" hidden></progress>
+  <figure class="solo"><canvas id="vid-out" width="64" height="48"></canvas><figcaption>逐幀還原預覽</figcaption></figure>
+  <div class="stats" id="vid-stats"></div>
+  <textarea id="vid-text" readonly aria-label="影片的公式" placeholder="選一段影片，每一幀都會變成一組公式。"></textarea>
+  <div class="row">
+    <button class="btn" id="vid-copy" disabled>複製公式</button>
+    <button class="btn" id="vid-save" disabled>存成 .txt</button>
+    <button class="btn" id="vid-send" disabled>拿去還原 →</button>
+  </div>
+</section>
+
+<section class="panel" id="p-dec" hidden>
+  <textarea id="dec-text" aria-label="貼上公式" placeholder="把公式貼在這裡，或用下面的按鈕載入 .txt 檔。"></textarea>
+  <div class="controls">
+    <div class="field"><label for="dec-pw">密碼（公式有加密才需要）</label>
+      <input type="password" id="dec-pw" autocomplete="off"></div>
+  </div>
+  <div class="row">
+    <button class="btn primary" id="dec-go">依公式繪製</button>
+    <label class="btn file">載入 .txt<input type="file" id="dec-file" accept=".txt,text/plain"></label>
+    <span class="msg" id="dec-msg"></span>
+  </div>
+  <figure class="solo"><canvas id="dec-out" width="64" height="48"></canvas><figcaption id="dec-cap">還原結果</figcaption></figure>
+  <div class="stats" id="dec-stats"></div>
+  <div class="row">
+    <button class="btn" id="dec-play" hidden>暫停</button>
+    <button class="btn" id="dec-png" disabled>存成 PNG</button>
+    <button class="btn" id="dec-vid" hidden>存成影片</button>
+  </div>
+</section>
+
+<p class="note">公式本身只是編碼，不是加密：沒設密碼時，任何拿到公式的人都能還原。設了密碼，公式會先用 AES‑256‑GCM 加密成密文再輸出。所有運算都在你的瀏覽器裡完成，不會上傳。</p>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const CH = ["Y", "Cb", "Cr"];
+
+/* ---------- math core ---------- */
+const cosCache = new Map();
+function cosTable(N) {            // T[u*N+x] = cos(pi*u*(2x+1)/(2N))
+  let t = cosCache.get(N);
+  if (!t) {
+    t = new Float32Array(N * N);
+    for (let u = 0; u < N; u++) for (let x = 0; x < N; x++) t[u * N + x] = Math.cos(Math.PI * u * (2 * x + 1) / (2 * N));
+    cosCache.set(N, t);
+  }
+  return t;
+}
+// Coefficients a[v*W+u] with f(x,y) = sum a_uv * cos(..u..x) * cos(..v..y)
+function dct2(f, W, H) {
+  const Cw = cosTable(W), Ch = cosTable(H), tmp = new Float32Array(W * H), a = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let u = 0; u < W; u++) {
+    let s = 0; const o = y * W, c = u * W;
+    for (let x = 0; x < W; x++) s += f[o + x] * Cw[c + x];
+    tmp[o + u] = s;
+  }
+  for (let v = 0; v < H; v++) for (let u = 0; u < W; u++) {
+    let s = 0; const c = v * H;
+    for (let y = 0; y < H; y++) s += tmp[y * W + u] * Ch[c + y];
+    a[v * W + u] = s * (u ? 2 : 1) * (v ? 2 : 1) / (W * H);
+  }
+  return a;
+}
+// rgba pixels -> frame {Y:[u,v,a,...], Cb:[...], Cr:[...]} keeping the K most important terms
+function encodeFrame(rgba, W, H, K) {
+  const n = W * H, P = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
+  for (let i = 0; i < n; i++) {
+    const r = rgba[4 * i], g = rgba[4 * i + 1], b = rgba[4 * i + 2];
+    P[0][i] = 0.299 * r + 0.587 * g + 0.114 * b;
+    P[1][i] = -0.168736 * r - 0.331264 * g + 0.5 * b;
+    P[2][i] = 0.5 * r - 0.418688 * g - 0.081312 * b;
+  }
+  const A = P.map(p => dct2(p, W, H));
+  const imp = new Float32Array(3 * n);
+  for (let c = 0; c < 3; c++) for (let v = 0; v < H; v++) for (let u = 0; u < W; u++) {
+    const i = v * W + u;
+    imp[c * n + i] = Math.abs(A[c][i]) * Math.sqrt((u ? .5 : 1) * (v ? .5 : 1)) * (c ? .7 : 1);
+  }
+  const sorted = Float32Array.from(imp).sort();
+  const thr = K >= 3 * n ? 0 : sorted[3 * n - K];
+  const fr = {};
+  for (let c = 0; c < 3; c++) {
+    const list = [];
+    for (let i = 0; i < n; i++) {
+      if (imp[c * n + i] < thr) continue;
+      const q = Math.round(A[c][i] * 10) / 10;
+      if (q !== 0) list.push([i % W, (i / W) | 0, q, imp[c * n + i]]);
+    }
+    list.sort((p, q) => q[3] - p[3]);
+    fr[CH[c]] = list.map(t => [t[0], t[1], t[2]]);
+  }
+  return fr;
+}
+function renderFrame(fr, W, H) {
+  const Cw = cosTable(W), Ch = cosTable(H), n = W * H;
+  const P = CH.map(k => {
+    const out = new Float32Array(n), rows = new Map();
+    for (const [u, v, a] of fr[k] || []) {
+      let r = rows.get(v); if (!r) rows.set(v, r = new Float32Array(W));
+      const o = u * W; for (let x = 0; x < W; x++) r[x] += a * Cw[o + x];
+    }
+    for (const [v, r] of rows) for (let y = 0; y < H; y++) {
+      const c = Ch[v * H + y], o = y * W;
+      for (let x = 0; x < W; x++) out[o + x] += c * r[x];
+    }
+    return out;
+  });
+  const img = new ImageData(W, H), d = img.data;
+  for (let i = 0; i < n; i++) {
+    const y = P[0][i], cb = P[1][i], cr = P[2][i];
+    d[4 * i] = y + 1.402 * cr; d[4 * i + 1] = y - 0.344136 * cb - 0.714136 * cr; d[4 * i + 2] = y + 1.772 * cb; d[4 * i + 3] = 255;
+  }
+  return img;
+}
+
+/* ---------- formula text ---------- */
+function frameText(fr) {
+  return CH.map(k => {
+    const ts = fr[k];
+    if (!ts.length) return `${k}(x,y) = 0`;
+    return `${k}(x,y) = ` + ts.map(([u, v, a], i) => (i ? (a < 0 ? " - " : " + ") : (a < 0 ? "-" : "")) + Math.abs(a) + `·C(${u},${v})`).join("");
+  }).join("\n");
+}
+function toText(frames, W, H, fps) {
+  const head = `【公式畫 v1】 W=${W}, H=${H}, frames=${frames.length}, fps=${fps}\n` +
+    `對 x = 0..W-1、y = 0..H-1，像素顏色為 rgb(Y + 1.402·Cr, Y - 0.344·Cb - 0.714·Cr, Y + 1.772·Cb)，其中\n` +
+    `C(u,v) = cos(πu(2x+1)/(2W))·cos(πv(2y+1)/(2H))\n`;
+  return head + frames.map((f, i) => (frames.length > 1 ? `\nt=${i}:\n` : "\n") + (typeof f === "string" ? f : frameText(f))).join("\n") + "\n";
+}
+function parseText(text) {
+  const num = k => { const m = text.match(new RegExp(k + "\\s*=\\s*(\\d+)")); return m ? +m[1] : 0; };
+  const W = num("W"), H = num("H"), fps = num("fps") || 8;
+  if (!(W >= 2 && H >= 2 && W <= 1024 && H <= 1024)) throw new Error("找不到 W、H 尺寸，這看起來不是公式畫的公式。");
+  const frames = []; let cur = null;
+  const termRe = /([+\-−–]?)\s*(\d+(?:\.\d+)?)\s*[·*×]?\s*C\(\s*(\d+)\s*,\s*(\d+)\s*\)/g;
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*(Y|Cb|Cr)\(x,y\)\s*=(.*)$/);
+    if (!m) continue;
+    if (m[1] === "Y" || !cur) frames.push(cur = { Y: [], Cb: [], Cr: [] });
+    let t; termRe.lastIndex = 0;
+    while ((t = termRe.exec(m[2]))) {
+      const u = +t[3], v = +t[4];
+      if (u < W && v < H) cur[m[1]].push([u, v, (t[1] && t[1] !== "+" ? -1 : 1) * +t[2]]);
+    }
+  }
+  if (!frames.length) throw new Error("公式裡沒有 Y(x,y) = … 這樣的式子。");
+  return { W, H, fps, frames };
+}
+
+/* ---------- optional password (AES-256-GCM, PBKDF2) ---------- */
+const ENC = "ENC-FX1:";
+async function keyFor(pw, salt) {
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 200000, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+function b64(bytes) { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); }
+function unb64(s) { const b = atob(s.replace(/\s+/g, "")), o = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) o[i] = b.charCodeAt(i); return o; }
+async function lock(text, pw) {
+  if (!pw) return text;
+  if (!crypto.subtle) throw new Error("這個瀏覽器環境不支援加密（需要 https）。");
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await keyFor(pw, salt), new TextEncoder().encode(text)));
+  const all = new Uint8Array(28 + ct.length); all.set(salt); all.set(iv, 16); all.set(ct, 28);
+  return ENC + b64(all);
+}
+async function unlock(text, pw) {
+  text = text.trim();
+  if (!text.startsWith(ENC)) return text;
+  if (!pw) throw new Error("這份公式有加密，請輸入密碼。");
+  let all; try { all = unb64(text.slice(ENC.length)); } catch { throw new Error("密文不完整，請確認整段都有貼上。"); }
+  try {
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: all.subarray(16, 28) }, await keyFor(pw, all.subarray(0, 16)), all.subarray(28));
+    return new TextDecoder().decode(pt);
+  } catch { throw new Error("密碼不對，或密文被改過。"); }
+}
+
+/* ---------- helpers ---------- */
+function fit(w, h, res) { const s = res / Math.max(w, h); return [Math.max(8, Math.round(w * s)), Math.max(8, Math.round(h * s))]; }
+function say(el, text, err) { el.textContent = text; el.classList.toggle("err", !!err); }
+const kb = n => n < 1024 ? n + " 字" : (n / 1024).toFixed(n < 102400 ? 1 : 0) + "K 字";
+async function saveFile(name, blob) {
+  try {
+    const d = window.claude && window.claude.use ? await window.claude.use("downloads") : null;
+    if (d) { await d.save({ filename: name, data: blob }); return; }
+  } catch (e) { if (e && e.code === "declined") return; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+async function copyText(text, msgEl) {
+  try { await navigator.clipboard.writeText(text); say(msgEl, `已複製 ${kb(text.length)}。`); }
+  catch { say(msgEl, "這裡不能自動複製，請改用「存成 .txt」或長按文字框全選。", true); }
+}
+const BIG = 300000;
+const preview = t => t.length > BIG ? t.slice(0, 20000) + `\n…（共 ${kb(t.length)}，這裡只顯示開頭；複製和存檔會是完整內容）` : t;
+function bindRange(id, fmt, onChange) {
+  const el = $(id), o = $(id + "-o"), upd = () => o.textContent = fmt(+el.value);
+  el.addEventListener("input", () => { upd(); onChange && onChange(); }); upd();
+}
+
+/* ---------- tabs ---------- */
+const tabs = [...document.querySelectorAll(".tabs button")];
+function showTab(id) {
+  tabs.forEach(b => { const on = b.id === id; b.setAttribute("aria-selected", on); $(b.dataset.p).hidden = !on; });
+}
+tabs.forEach(b => b.addEventListener("click", () => showTab(b.id)));
+
+/* ---------- image -> formula ---------- */
+const img = { source: null, text: "", timer: 0, job: 0 };
+function sampleImage() {       // a small drawn scene so the page opens with something to look at
+  const c = document.createElement("canvas"); c.width = 480; c.height = 360; const g = c.getContext("2d");
+  const sky = g.createLinearGradient(0, 0, 0, 260); sky.addColorStop(0, "#27477f"); sky.addColorStop(.6, "#e79a6b"); sky.addColorStop(1, "#f6d58c");
+  g.fillStyle = sky; g.fillRect(0, 0, 480, 360);
+  g.fillStyle = "#fff3c4"; g.beginPath(); g.arc(330, 190, 44, 0, 7); g.fill();
+  g.fillStyle = "#3d5a66"; g.beginPath(); g.moveTo(0, 250); g.lineTo(110, 150); g.lineTo(200, 235); g.lineTo(290, 170); g.lineTo(480, 260); g.lineTo(480, 360); g.lineTo(0, 360); g.fill();
+  g.fillStyle = "#1f3a3a"; g.beginPath(); g.moveTo(0, 300); g.quadraticCurveTo(160, 230, 300, 300); g.quadraticCurveTo(400, 340, 480, 290); g.lineTo(480, 360); g.lineTo(0, 360); g.fill();
+  g.fillStyle = "#12211f"; g.beginPath(); g.moveTo(90, 330); g.lineTo(120, 215); g.lineTo(150, 330); g.fill();
+  return c;
+}
+async function encodeImage() {
+  const job = ++img.job, src = img.source;
+  const [W, H] = fit(src.width, src.height, +$("img-res").value), K = +$("img-terms").value;
+  const cs = $("img-src"), co = $("img-out"); cs.width = co.width = W; cs.height = co.height = H;
+  const g = cs.getContext("2d", { willReadFrequently: true }); g.drawImage(src, 0, 0, W, H);
+  const px = g.getImageData(0, 0, W, H).data;
+  const fr = encodeFrame(px, W, H, K), out = renderFrame(fr, W, H);
+  co.getContext("2d").putImageData(out, 0, 0);
+  let se = 0; for (let i = 0; i < px.length; i++) if ((i & 3) !== 3) { const d = px[i] - out.data[i]; se += d * d; }
+  const psnr = 10 * Math.log10(255 * 255 / Math.max(se / (W * H * 3), 1e-9));
+  const terms = CH.reduce((s, k) => s + fr[k].length, 0), plain = toText([fr], W, H, 0);
+  let text; try { text = await lock(plain, $("img-pw").value); } catch (e) { say($("img-msg"), e.message, true); text = plain; }
+  if (job !== img.job) return;
+  img.text = text; $("img-text").value = preview(text);
+  $("img-stats").innerHTML = `<b>${W}×${H}</b> 像素　<b>${terms}</b> 項　公式長 <b>${kb(text.length)}</b>　相似度 PSNR <b>${psnr.toFixed(1)} dB</b>` + ($("img-pw").value ? "　已加密" : "");
+}
+function scheduleImage() { clearTimeout(img.timer); img.timer = setTimeout(encodeImage, 120); }
+bindRange("img-res", v => v + " px", scheduleImage);
+bindRange("img-terms", v => v + " 項", scheduleImage);
+$("img-pw").addEventListener("input", scheduleImage);
+$("img-file").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  const im = new Image(), url = URL.createObjectURL(f);
+  im.onload = () => { img.source = im; say($("img-msg"), f.name); encodeImage(); };
+  im.onerror = () => say($("img-msg"), "這個檔案讀不出來，請換一張 JPG 或 PNG。", true);
+  im.src = url;
+});
+$("img-copy").addEventListener("click", () => copyText(img.text, $("img-msg")));
+$("img-save").addEventListener("click", () => saveFile("formula-image.txt", new Blob([img.text], { type: "text/plain" })));
+$("img-send").addEventListener("click", () => sendToDecode(img.text, $("img-pw").value));
+
+/* ---------- video -> formula ---------- */
+const vid = { text: "", busy: false };
+bindRange("vid-res", v => v + " px"); bindRange("vid-terms", v => v + " 項"); bindRange("vid-fps", v => v + " fps");
+const once = (el, ev, ms) => new Promise((ok, no) => {
+  const t = setTimeout(() => no(new Error("影片讀取逾時，這個格式瀏覽器可能不支援。")), ms || 15000);
+  el.addEventListener(ev, () => { clearTimeout(t); ok(); }, { once: true });
+  el.addEventListener("error", () => { clearTimeout(t); no(new Error("這個影片檔瀏覽器解不開，請換成 MP4。")); }, { once: true });
+});
+$("vid-file").addEventListener("change", async e => {
+  const f = e.target.files[0]; if (!f || vid.busy) return;
+  vid.busy = true; const msg = $("vid-msg"), prog = $("vid-prog");
+  const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto";
+  try {
+    v.src = URL.createObjectURL(f); const ready = once(v, "loadeddata"); v.load();
+    v.play().then(() => v.pause()).catch(() => {});
+    await ready; v.pause();
+    const fps = +$("vid-fps").value, K = +$("vid-terms").value, [W, H] = fit(v.videoWidth, v.videoHeight, +$("vid-res").value);
+    const dur = isFinite(v.duration) ? v.duration : 0, N = Math.max(1, Math.min(240, Math.floor(dur * fps)));
+    const work = document.createElement("canvas"); work.width = W; work.height = H; const g = work.getContext("2d", { willReadFrequently: true });
+    const out = $("vid-out"); out.width = W; out.height = H; const og = out.getContext("2d");
+    prog.hidden = false; prog.max = N; const parts = []; let terms = 0;
+    for (let i = 0; i < N; i++) {
+      const seeked = once(v, "seeked"); v.currentTime = Math.min(i / fps, Math.max(0, dur - 0.01)); await seeked;
+      g.drawImage(v, 0, 0, W, H);
+      const fr = encodeFrame(g.getImageData(0, 0, W, H).data, W, H, K);
+      terms += CH.reduce((s, k) => s + fr[k].length, 0); parts.push(frameText(fr));
+      og.putImageData(renderFrame(fr, W, H), 0, 0);
+      prog.value = i + 1; say(msg, `計算中：第 ${i + 1} / ${N} 幀`);
+      await new Promise(r => setTimeout(r));
+    }
+    vid.text = await lock(toText(parts, W, H, fps), $("vid-pw").value);
+    $("vid-text").value = preview(vid.text);
+    $("vid-stats").innerHTML = `<b>${W}×${H}</b> 像素　<b>${N}</b> 幀 @ ${fps} fps　共 <b>${terms}</b> 項　公式長 <b>${kb(vid.text.length)}</b>` + ($("vid-pw").value ? "　已加密" : "");
+    ["vid-copy", "vid-save", "vid-send"].forEach(id => $(id).disabled = false);
+    say(msg, `完成：${f.name}` + (dur * fps > 240 ? "（只取前 240 幀）" : ""));
+  } catch (err) { say(msg, err.message || String(err), true); }
+  finally { prog.hidden = true; vid.busy = false; URL.revokeObjectURL(v.src); e.target.value = ""; }
+});
+$("vid-copy").addEventListener("click", () => copyText(vid.text, $("vid-msg")));
+$("vid-save").addEventListener("click", () => saveFile("formula-video.txt", new Blob([vid.text], { type: "text/plain" })));
+$("vid-send").addEventListener("click", () => sendToDecode(vid.text, $("vid-pw").value));
+
+/* ---------- formula -> picture / video ---------- */
+const dec = { big: null, data: null, cache: [], i: 0, timer: 0, playing: false };
+function setDecodeText(t) { dec.big = t.length > BIG ? t : null; $("dec-text").value = preview(t); }
+$("dec-text").addEventListener("input", () => dec.big = null);
+function sendToDecode(text, pw) { setDecodeText(text); $("dec-pw").value = pw || ""; showTab("tab-dec"); decode(); }
+$("dec-file").addEventListener("change", async e => {
+  const f = e.target.files[0]; if (!f) return;
+  setDecodeText(await f.text()); say($("dec-msg"), `已載入 ${f.name}`); e.target.value = ""; decode();
+});
+function frameAt(i) { return dec.cache[i] || (dec.cache[i] = renderFrame(dec.data.frames[i], dec.data.W, dec.data.H)); }
+function stopPlay() { clearInterval(dec.timer); dec.timer = 0; dec.playing = false; }
+function startPlay() {
+  stopPlay(); dec.playing = true; const g = $("dec-out").getContext("2d");
+  dec.timer = setInterval(() => { g.putImageData(frameAt(dec.i), 0, 0); dec.i = (dec.i + 1) % dec.data.frames.length; }, 1000 / dec.data.fps);
+  $("dec-play").textContent = "暫停";
+}
+async function decode() {
+  const msg = $("dec-msg");
+  try {
+    stopPlay();
+    const raw = dec.big || $("dec-text").value;
+    if (!raw.trim()) throw new Error("請先貼上公式。");
+    const d = parseText(await unlock(raw, $("dec-pw").value));
+    dec.data = d; dec.cache = []; dec.i = 0;
+    const c = $("dec-out"); c.width = d.W; c.height = d.H;
+    c.getContext("2d").putImageData(frameAt(0), 0, 0);
+    const isVid = d.frames.length > 1, terms = d.frames.reduce((s, f) => s + f.Y.length + f.Cb.length + f.Cr.length, 0);
+    $("dec-stats").innerHTML = `<b>${d.W}×${d.H}</b> 像素　` + (isVid ? `<b>${d.frames.length}</b> 幀 @ ${d.fps} fps　` : "") + `<b>${terms}</b> 項`;
+    $("dec-play").hidden = $("dec-vid").hidden = !isVid;
+    $("dec-vid").hidden = !isVid || !(window.MediaRecorder && c.captureStream);
+    $("dec-png").disabled = false;
+    $("dec-cap").textContent = isVid ? "還原的影片" : "還原的圖片";
+    say(msg, isVid ? "影片已還原，正在循環播放。" : "圖片已還原。");
+    if (isVid) startPlay();
+  } catch (err) { say(msg, err.message || String(err), true); }
+}
+$("dec-go").addEventListener("click", decode);
+$("dec-play").addEventListener("click", () => { if (dec.playing) { stopPlay(); $("dec-play").textContent = "播放"; } else startPlay(); });
+$("dec-png").addEventListener("click", () => $("dec-out").toBlob(b => saveFile("formula-image.png", b), "image/png"));
+$("dec-vid").addEventListener("click", async () => {
+  const c = $("dec-out"), d = dec.data, msg = $("dec-msg"), btn = $("dec-vid");
+  const type = ["video/mp4", "video/webm;codecs=vp9", "video/webm"].find(t => MediaRecorder.isTypeSupported(t));
+  if (!type) return say(msg, "這個瀏覽器不能錄製影片。", true);
+  try {
+    btn.disabled = true; stopPlay(); say(msg, "錄製中…");
+    const rec = new MediaRecorder(c.captureStream(d.fps), { mimeType: type }), chunks = [];
+    rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+    const done = new Promise(r => rec.onstop = r); rec.start();
+    const g = c.getContext("2d");
+    for (let i = 0; i < d.frames.length; i++) { g.putImageData(frameAt(i), 0, 0); await new Promise(r => setTimeout(r, 1000 / d.fps)); }
+    rec.stop(); await done;
+    await saveFile("formula-video." + (type.includes("mp4") ? "mp4" : "webm"), new Blob(chunks, { type: type.split(";")[0] }));
+    say(msg, "影片已輸出。");
+  } catch (err) { say(msg, "錄製失敗：" + (err.message || err), true); }
+  finally { btn.disabled = false; startPlay(); }
+});
+
+/* ---------- start with the sample ---------- */
+img.source = sampleImage(); encodeImage();
+</script>
+<!--/APP-BODY-->
+</body>
+</html>
