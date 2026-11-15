@@ -82,9 +82,9 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
 <section class="panel" id="p-img">
   <div class="controls">
     <div class="field"><label for="img-res">解析度（長邊）<output id="img-res-o"></output></label>
-      <input type="range" id="img-res" min="32" max="256" step="8" value="128"></div>
+      <input type="range" id="img-res" min="32" max="384" step="8" value="256"></div>
     <div class="field"><label for="img-terms">公式項數 <output id="img-terms-o"></output></label>
-      <input type="range" id="img-terms" min="100" max="20000" step="100" value="3000"></div>
+      <input type="range" id="img-terms" min="500" max="60000" step="500" value="20000"></div>
   </div>
   <div class="row">
     <label class="btn primary file">選擇照片<input type="file" id="img-file" accept="image/*"></label>
@@ -178,7 +178,7 @@ function dct2(f, W, H) {
   return a;
 }
 // rgba pixels -> frame {Y:[u,v,a,...], Cb:[...], Cr:[...]} keeping the K most important terms
-function encodeFrame(rgba, W, H, K) {
+function analyze(rgba, W, H) {
   const n = W * H, P = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
   for (let i = 0; i < n; i++) {
     const r = rgba[4 * i], g = rgba[4 * i + 1], b = rgba[4 * i + 2];
@@ -192,7 +192,9 @@ function encodeFrame(rgba, W, H, K) {
     const i = v * W + u;
     imp[c * n + i] = Math.abs(A[c][i]) * Math.sqrt((u ? .5 : 1) * (v ? .5 : 1)) * (c ? .7 : 1);
   }
-  const sorted = Float32Array.from(imp).sort();
+  return { A, imp, n, sorted: Float32Array.from(imp).sort() };
+}
+function pick({ A, imp, n, sorted }, W, K) {
   const thr = K >= 3 * n ? 0 : sorted[3 * n - K];
   const fr = {};
   for (let c = 0; c < 3; c++) {
@@ -207,6 +209,7 @@ function encodeFrame(rgba, W, H, K) {
   }
   return fr;
 }
+const encodeFrame = (rgba, W, H, K) => pick(analyze(rgba, W, H), W, K);
 function renderFrame(fr, W, H) {
   const Cw = cosTable(W), Ch = cosTable(H), n = W * H;
   const P = CH.map(k => {
@@ -311,7 +314,8 @@ async function encodeImage() {
   const cs = $("img-src"), co = $("img-out"); cs.width = co.width = W; cs.height = co.height = H;
   const g = cs.getContext("2d", { willReadFrequently: true }); g.drawImage(src, 0, 0, W, H);
   const px = g.getImageData(0, 0, W, H).data;
-  const fr = encodeFrame(px, W, H, K), out = renderFrame(fr, W, H);
+  if (!img.ana || img.ana.src !== src || img.ana.W !== W || img.ana.H !== H) img.ana = { src, W, H, a: analyze(px, W, H) };
+  const fr = pick(img.ana.a, W, K), out = renderFrame(fr, W, H);
   co.getContext("2d").putImageData(out, 0, 0);
   let se = 0; for (let i = 0; i < px.length; i++) if ((i & 3) !== 3) { const d = px[i] - out.data[i]; se += d * d; }
   const psnr = 10 * Math.log10(255 * 255 / Math.max(se / (W * H * 3), 1e-9));
