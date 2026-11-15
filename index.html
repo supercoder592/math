@@ -44,6 +44,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .btn{text-decoration:none;font:500 14px var(--f-body);padding:9px 14px;border-radius:4px;border:1px solid var(--line);background:var(--surface);
   color:var(--ink);cursor:pointer;display:inline-flex;align-items:center}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:700}
 .btn:disabled{opacity:.5;cursor:default}
 .btn:focus-visible,.tabs button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .file input{position:absolute;opacity:0;width:1px;height:1px}
@@ -145,7 +146,17 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
 </section>
 
 <section class="panel" id="p-ggb" hidden>
-  <div class="controls">
+  <div class="row" id="ggb-mode" role="group" aria-label="畫法">
+    <button class="btn" data-m="line" aria-pressed="true">線條</button>
+    <button class="btn" data-m="dot" aria-pressed="false">圓點</button>
+  </div>
+  <div class="controls" id="ggb-line-ctl">
+    <div class="field"><label for="ggb-edge">線條量 <output id="ggb-edge-o"></output></label>
+      <input type="range" id="ggb-edge" min="4" max="30" step="1" value="16"></div>
+    <div class="field"><label for="ggb-detail">曲線細節 <output id="ggb-detail-o"></output></label>
+      <input type="range" id="ggb-detail" min="1" max="10" step="1" value="5"></div>
+  </div>
+  <div class="controls" id="ggb-dot-ctl" hidden>
     <div class="field"><label for="ggb-res">圓點格數（長邊）<output id="ggb-res-o"></output></label>
       <input type="range" id="ggb-res" min="32" max="112" step="8" value="80"></div>
     <div class="field"><label for="ggb-terms">公式項數 <output id="ggb-terms-o"></output></label>
@@ -155,7 +166,7 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
     <label class="btn primary" for="img-file">選擇照片</label>
     <span class="msg" id="ggb-msg">和「圖片 → 公式」用同一張照片。</span>
   </div>
-  <figure class="solo"><canvas id="ggb-out" width="64" height="64"></canvas><figcaption>GeoGebra 會畫出來的樣子（黑白圓點）</figcaption></figure>
+  <figure class="solo"><canvas id="ggb-out" width="64" height="64"></canvas><figcaption>GeoGebra 會畫出來的樣子</figcaption></figure>
   <div class="stats" id="ggb-stats"></div>
   <textarea id="ggb-text" readonly aria-label="GeoGebra 指令"></textarea>
   <div class="row">
@@ -163,7 +174,7 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
     <button class="btn" id="ggb-save">存成 .txt</button>
     <a class="btn" href="https://www.geogebra.org/classic" target="_blank" rel="noopener">開啟 GeoGebra</a>
   </div>
-  <p class="note">用法：開啟 GeoGebra Classic，把整段指令貼進下方的輸入列按 Enter，等它算完。每個格點畫一個圓，圓的半徑由公式 f(x,y) 決定，越暗的地方圓越大。</p>
+  <p class="note">用法：開啟 GeoGebra Classic，把整段指令貼進下方的輸入列按 Enter，等它算完。「線條」會描出圖裡的邊緣，每條輪廓是一條由 cos、sin 組成的參數曲線；「圓點」是每個格點畫一個圓，越暗圓越大。</p>
 </section>
 
 <p class="note">所有運算都在你的瀏覽器裡完成，不會上傳。</p>
@@ -364,8 +375,121 @@ $("img-save").addEventListener("click", () => saveFile("formula-image.txt", new 
 $("img-send").addEventListener("click", () => sendToDecode(img.text));
 
 /* ---------- GeoGebra halftone ---------- */
-const ggb = { text: "", timer: 0, ana: null };
-function encodeGgb() {
+const ggb = { text: "", timer: 0, ana: null, mode: "line", edge: null };
+function setGgb(text, stats) { ggb.text = text; $("ggb-text").value = preview(text); $("ggb-stats").innerHTML = stats; }
+function encodeGgb() { return ggb.mode === "line" ? encodeGgbLines() : encodeGgbDots(); }
+
+// Edge strength of the picture (blurred greyscale -> Sobel), cached per source image
+function edgeMap(src) {
+  if (ggb.edge && ggb.edge.src === src) return ggb.edge;
+  const [W, H] = fit(src.width, src.height, 320), n = W * H;
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(src, 0, 0, W, H);
+  const px = g.getImageData(0, 0, W, H).data; let a = new Float32Array(n), b = new Float32Array(n);
+  for (let i = 0; i < n; i++) a[i] = 0.299 * px[4 * i] + 0.587 * px[4 * i + 1] + 0.114 * px[4 * i + 2];
+  const at = (f, x, y) => f[Math.min(H - 1, Math.max(0, y)) * W + Math.min(W - 1, Math.max(0, x))];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let s = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) s += at(a, x + dx, y + dy);
+    b[y * W + x] = s / 9;
+  }
+  const F = new Float32Array(n);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const gx = at(b, x + 1, y - 1) + 2 * at(b, x + 1, y) + at(b, x + 1, y + 1) - at(b, x - 1, y - 1) - 2 * at(b, x - 1, y) - at(b, x - 1, y + 1);
+    const gy = at(b, x - 1, y + 1) + 2 * at(b, x, y + 1) + at(b, x + 1, y + 1) - at(b, x - 1, y - 1) - 2 * at(b, x, y - 1) - at(b, x + 1, y - 1);
+    F[y * W + x] = Math.hypot(gx, gy);
+  }
+  return ggb.edge = { src, W, H, F, sorted: Float32Array.from(F).sort() };
+}
+// Marching squares: closed loops around every region where F > T
+function traceLoops(F, W, H, T) {
+  const S = W + 2, val = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? -1 : F[y * W + x] - T;
+  const pts = new Map(), adj = new Map();
+  const link = (p, q) => { (adj.get(p) || adj.set(p, []).get(p)).push(q); (adj.get(q) || adj.set(q, []).get(q)).push(p); };
+  for (let y = -1; y < H; y++) for (let x = -1; x < W; x++) {
+    const a = val(x, y), b = val(x + 1, y), c = val(x + 1, y + 1), d = val(x, y + 1);
+    const m = (a > 0 ? 1 : 0) | (b > 0 ? 2 : 0) | (c > 0 ? 4 : 0) | (d > 0 ? 8 : 0);
+    if (m === 0 || m === 15) continue;
+    const base = (y + 1) * S + (x + 1), Tk = 2 * base, Lk = 2 * base + 1, Rk = 2 * (base + 1) + 1, Bk = 2 * (base + S);
+    if ((a > 0) !== (b > 0)) pts.set(Tk, [x + a / (a - b), y]);
+    if ((a > 0) !== (d > 0)) pts.set(Lk, [x, y + a / (a - d)]);
+    if ((b > 0) !== (c > 0)) pts.set(Rk, [x + 1, y + b / (b - c)]);
+    if ((d > 0) !== (c > 0)) pts.set(Bk, [x + d / (d - c), y + 1]);
+    switch (m) {
+      case 1: case 14: link(Lk, Tk); break;
+      case 2: case 13: link(Tk, Rk); break;
+      case 3: case 12: link(Lk, Rk); break;
+      case 4: case 11: link(Rk, Bk); break;
+      case 6: case 9: link(Tk, Bk); break;
+      case 7: case 8: link(Lk, Bk); break;
+      case 5: link(Lk, Tk); link(Rk, Bk); break;
+      case 10: link(Tk, Rk); link(Bk, Lk); break;
+    }
+  }
+  const seen = new Set(), loops = [];
+  for (const start of adj.keys()) {
+    if (seen.has(start)) continue;
+    const loop = []; let prev = -1, cur = start;
+    while (cur !== undefined && !seen.has(cur)) {
+      seen.add(cur); loop.push(pts.get(cur));
+      const nb = adj.get(cur), next = nb[0] !== prev ? nb[0] : nb[1]; prev = cur; cur = next;
+    }
+    if (loop.length >= 8) loops.push(loop);
+  }
+  return loops;
+}
+// Closed polyline -> x(t), y(t) as truncated Fourier series
+function fourierCurve(loop, perPx) {
+  const n = loop.length, cum = [0];
+  for (let i = 0; i < n; i++) { const p = loop[i], q = loop[(i + 1) % n]; cum.push(cum[i] + Math.hypot(q[0] - p[0], q[1] - p[1])); }
+  const len = cum[n]; if (len < 14) return null;
+  const M = Math.min(4096, Math.max(32, Math.round(len * 2))), xs = new Float32Array(M), ys = new Float32Array(M);
+  for (let j = 0, i = 0; j < M; j++) {
+    const s = len * j / M; while (cum[i + 1] < s) i++;
+    const p = loop[i], q = loop[(i + 1) % n], t = (s - cum[i]) / Math.max(1e-9, cum[i + 1] - cum[i]);
+    xs[j] = p[0] + t * (q[0] - p[0]); ys[j] = p[1] + t * (q[1] - p[1]);
+  }
+  const K = Math.min(250, Math.max(2, Math.round(len * perPx)), (M >> 1) - 1), r = v => Math.round(v * 100) / 100;
+  let x0 = 0, y0 = 0; for (let j = 0; j < M; j++) { x0 += xs[j]; y0 += ys[j]; }
+  const cx = [], cy = [];
+  for (let k = 1; k <= K; k++) {
+    let ax = 0, bx = 0, ay = 0, by = 0;
+    for (let j = 0; j < M; j++) { const t = 2 * Math.PI * k * j / M, c = Math.cos(t), s = Math.sin(t); ax += xs[j] * c; bx += xs[j] * s; ay += ys[j] * c; by += ys[j] * s; }
+    cx.push([k, r(2 * ax / M), r(2 * bx / M)]); cy.push([k, r(2 * ay / M), r(2 * by / M)]);
+  }
+  return { x0: r(x0 / M), y0: r(y0 / M), cx, cy };
+}
+function seriesText(c0, cs, sign) {            // sign = -1 flips y for GeoGebra (y axis points up)
+  let s = String(c0), terms = 0;
+  for (const [k, a, b] of cs) for (const [v, fn] of [[a * sign, "cos"], [b * sign, "sin"]]) {
+    if (Math.abs(v) < 0.05) continue;
+    s += (v < 0 ? "-" : "+") + Math.abs(v) + fn + "(" + (k > 1 ? k : "") + "t)"; terms++;
+  }
+  return [s, terms];
+}
+function encodeGgbLines() {
+  const e = edgeMap(img.source), { W, H, F, sorted } = e, pct = +$("ggb-edge").value, perPx = +$("ggb-detail").value * 0.04;
+  const T = sorted[Math.floor(sorted.length * (1 - pct / 100))];
+  const curves = traceLoops(F, W, H, T).map(l => fourierCurve(l, perPx)).filter(Boolean);
+  const S = 720 / Math.max(W, H), cv = $("ggb-out"); cv.width = Math.round(W * S); cv.height = Math.round(H * S);
+  const g = cv.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, cv.width, cv.height); g.strokeStyle = "#000"; g.lineWidth = 1.2;
+  const parts = []; let terms = 0;
+  for (const c of curves) {
+    const N = Math.max(48, c.cx.length * 8); g.beginPath();
+    for (let j = 0; j <= N; j++) {
+      const t = 2 * Math.PI * j / N; let x = c.x0, y = c.y0;
+      for (const [k, a, b] of c.cx) x += a * Math.cos(k * t) + b * Math.sin(k * t);
+      for (const [k, a, b] of c.cy) y += a * Math.cos(k * t) + b * Math.sin(k * t);
+      j ? g.lineTo(x * S, y * S) : g.moveTo(x * S, y * S);
+    }
+    g.stroke();
+    const [fx, nx] = seriesText(c.x0, c.cx, 1), [fy, ny] = seriesText(Math.round((H - c.y0) * 100) / 100, c.cy, -1);
+    terms += nx + ny + 2; parts.push(`Curve(${fx},${fy},t,0,2pi)`);
+  }
+  const cmds = [`L={${parts.join(",")}}`, `SetColor(L,"Black")`, `SetLineThickness(L,2)`, `ShowAxes(false)`, `ShowGrid(false)`, `ZoomIn(-5,-5,${W + 5},${H + 5})`];
+  const text = "Execute({" + cmds.map(c => '"' + c.replace(/"/g, '""') + '"').join(",") + "})";
+  setGgb(text, `<b>${curves.length}</b> 條曲線　共 <b>${terms}</b> 項　指令長 <b>${kb(text.length)}</b>`);
+}
+function encodeGgbDots() {
   const src = img.source, [W, H] = fit(src.width, src.height, +$("ggb-res").value), n = W * H, K = Math.min(+$("ggb-terms").value, n);
   if (!ggb.ana || ggb.ana.src !== src || ggb.ana.W !== W || ggb.ana.H !== H) {
     const c = document.createElement("canvas"); c.width = W; c.height = H;
@@ -388,12 +512,18 @@ function encodeGgb() {
     `L=Flatten(Sequence(Sequence(Circle((m,${H - 1}-n),0.03+0.56abs(d(m,n))^0.75),m,0,${W - 1}),n,0,${H - 1}))`,
     `SetFilling(L,1)`, `SetColor(L,"Black")`, `SetVisibleInView(f,1,false)`, `SetVisibleInView(d,1,false)`,
     `ShowAxes(false)`, `ShowGrid(false)`, `ZoomIn(-2,-2,${W + 1},${H + 1})`];
-  ggb.text = "Execute({" + cmds.map(c => '"' + c.replace(/"/g, '""') + '"').join(",") + "})";
-  $("ggb-text").value = ggb.text;
+  const text = "Execute({" + cmds.map(c => '"' + c.replace(/"/g, '""') + '"').join(",") + "})";
   const secs = n * Y.length / 160000;
-  $("ggb-stats").innerHTML = `<b>${W}×${H}</b> 格＝<b>${n}</b> 個圓　<b>${Y.length}</b> 項　指令長 <b>${kb(ggb.text.length)}</b>　GeoGebra 約需 <b>${secs < 90 ? Math.max(1, Math.round(secs)) + " 秒" : Math.round(secs / 60) + " 分鐘"}</b>`;
+  setGgb(text, `<b>${W}×${H}</b> 格＝<b>${n}</b> 個圓　<b>${Y.length}</b> 項　指令長 <b>${kb(ggb.text.length)}</b>　GeoGebra 約需 <b>${secs < 90 ? Math.max(1, Math.round(secs)) + " 秒" : Math.round(secs / 60) + " 分鐘"}</b>`);
 }
 function scheduleGgb() { clearTimeout(ggb.timer); ggb.timer = setTimeout(encodeGgb, 120); }
+bindRange("ggb-edge", v => v + " %", scheduleGgb);
+bindRange("ggb-detail", v => String(v), scheduleGgb);
+document.querySelectorAll("#ggb-mode button").forEach(b => b.addEventListener("click", () => {
+  ggb.mode = b.dataset.m;
+  document.querySelectorAll("#ggb-mode button").forEach(o => o.setAttribute("aria-pressed", o === b));
+  $("ggb-line-ctl").hidden = ggb.mode !== "line"; $("ggb-dot-ctl").hidden = ggb.mode !== "dot"; encodeGgb();
+}));
 bindRange("ggb-res", v => v + " 格", scheduleGgb);
 bindRange("ggb-terms", v => v + " 項", scheduleGgb);
 $("ggb-copy").addEventListener("click", () => copyText(ggb.text, $("ggb-msg")));
