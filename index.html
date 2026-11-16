@@ -153,15 +153,15 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
   </div>
   <div class="controls" id="ggb-fill-ctl">
     <div class="field"><label for="ggb-fres">解析度（長邊）<output id="ggb-fres-o"></output></label>
-      <input type="range" id="ggb-fres" min="160" max="512" step="16" value="320"></div>
+      <input type="range" id="ggb-fres" min="160" max="512" step="16" value="512"></div>
     <div class="field"><label for="ggb-colors">顏色數 <output id="ggb-colors-o"></output></label>
-      <input type="range" id="ggb-colors" min="4" max="200" step="4" value="16"></div>
+      <input type="range" id="ggb-colors" min="4" max="200" step="4" value="32"></div>
     <div class="field"><label for="ggb-fdetail">曲線細節 <output id="ggb-fdetail-o"></output></label>
-      <input type="range" id="ggb-fdetail" min="1" max="10" step="1" value="5"></div>
+      <input type="range" id="ggb-fdetail" min="1" max="10" step="1" value="8"></div>
     <div class="field"><label for="ggb-minarea">最小色塊 <output id="ggb-minarea-o"></output></label>
-      <input type="range" id="ggb-minarea" min="1" max="60" step="1" value="12"></div>
+      <input type="range" id="ggb-minarea" min="1" max="60" step="1" value="4"></div>
     <div class="field"><label for="ggb-fix">邊緣修正 <output id="ggb-fix-o"></output></label>
-      <input type="range" id="ggb-fix" min="0" max="10" step="1" value="0"></div>
+      <input type="range" id="ggb-fix" min="0" max="10" step="1" value="10"></div>
   </div>
   <div class="controls" id="ggb-line-ctl" hidden>
     <div class="field"><label for="ggb-edge">線條量 <output id="ggb-edge-o"></output></label>
@@ -486,7 +486,9 @@ function curvePath(g, c, S) {
 }
 function encodeGgbFill() {
   const q = quantize(img.source, +$("ggb-colors").value, +$("ggb-fres").value), { W, H, px, pal } = q, perPx = +$("ggb-fdetail").value * 0.06;
-  const minArea = +$("ggb-minarea").value, dark = pal.reduce((a, b) => (a[0] + a[1] + a[2] <= b[0] + b[1] + b[2] ? a : b)), r2 = v => Math.round(v * 100) / 100;
+  const minArea = +$("ggb-minarea").value, r2 = v => Math.round(v * 100) / 100;
+  const hist = new Int32Array(pal.length); for (let i = 0; i < W * H; i++) hist[q.lab[i]]++;
+  const dark = pal[hist.indexOf(Math.max(...hist))];   // backing sheet: the most common colour, so any hairline gaps blend in
   const all = regions(minArea > 1 ? mergeSmall(q.lab, W, H, pal, minArea) : q.lab, W, H, minArea, px);
   // big regions: one Fourier curve each, largest first
   const big = all.filter(r => r.loop).map(r => ({ color: r.color, c: fourierCurve(r.loop, perPx) })).filter(r => r.c);
