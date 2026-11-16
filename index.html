@@ -529,12 +529,12 @@ function encodeGgbFill() {
   let terms = 0;
   const col = c => c.map(v => Math.round(v / 255 * 1000) / 1000).join(",");
   const box = (x0, y0, x1, y1) => `Polygon((${x0},${H - y0}),(${x1 + 1},${H - y0}),(${x1 + 1},${H - y1 - 1}),(${x0},${H - y1 - 1}))`;
-  const cmds = [`r0={${box(0, 0, W - 1, H - 1)}}`, `SetColor(r0,${col(dark)})`, `SetFilling(r0,1)`, `SetLineOpacity(r0,0)`];
+  const cmds = [`r0={${box(0, 0, W - 1, H - 1)}}`, `SetColor(r0,${col(dark)})`, `SetFilling(r0,1)`, `SetLineOpacity(r0,0)`, `ShowLabel(r0,false)`];
   big.forEach((r, i) => {
     const [fx, nx] = seriesText(r.c.x0, r.c.cx, 1), [fy, ny] = seriesText(r2(H - r.c.y0), r.c.cy, -1); terms += nx + ny + 2;
-    cmds.push(`r${i + 1}=Curve(${fx},${fy},t,0,2pi)`, `SetColor(r${i + 1},${col(r.color)})`, `SetFilling(r${i + 1},1)`, `SetLineThickness(r${i + 1},1)`);
+    cmds.push(`r${i + 1}=Curve(${fx},${fy},t,0,2pi)`, `SetColor(r${i + 1},${col(r.color)})`, `SetFilling(r${i + 1},1)`, `SetLineThickness(r${i + 1},1)`, `ShowLabel(r${i + 1},false)`);
   });
-  rects.forEach((list, k) => { if (list.length) cmds.push(`p${k}={${list.map(rc => box(...rc)).join(",")}}`, `SetColor(p${k},${col(pal[k])})`, `SetFilling(p${k},1)`, `SetLineOpacity(p${k},0)`); });
+  rects.forEach((list, k) => { if (list.length) cmds.push(`p${k}={${list.map(rc => box(...rc)).join(",")}}`, `SetColor(p${k},${col(pal[k])})`, `SetFilling(p${k},1)`, `SetLineOpacity(p${k},0)`, `ShowLabel(p${k},false)`); });
   // zoom so one picture pixel is a whole number of screen pixels (keeps the little rectangles seamless)
   cmds.push(`ShowAxes(false)`, `ShowGrid(false)`, `zm=Min(x(Corner(5))/${W},y(Corner(5))/${H})`, `zs=If(zm>=1,floor(zm),zm)`, `ZoomIn(0,${H}-y(Corner(5))/zs,x(Corner(5))/zs,${H})`);
   const text = "Execute({" + cmds.map(c => '"' + c.replace(/"/g, '""') + '"').join(",") + "})";
@@ -647,7 +647,7 @@ function encodeGgbLines() {
     const [fx, nx] = seriesText(c.x0, c.cx, 1), [fy, ny] = seriesText(Math.round((H - c.y0) * 100) / 100, c.cy, -1);
     terms += nx + ny + 2; parts.push(`Curve(${fx},${fy},t,0,2pi)`);
   }
-  const cmds = [`L={${parts.join(",")}}`, `SetColor(L,"Black")`, `SetLineThickness(L,2)`, `ShowAxes(false)`, `ShowGrid(false)`, `ZoomIn(-5,-5,${W + 5},${H + 5})`];
+  const cmds = [`L={${parts.join(",")}}`, `SetColor(L,"Black")`, `SetLineThickness(L,2)`, `ShowLabel(L,false)`, `ShowAxes(false)`, `ShowGrid(false)`, `ZoomIn(-5,-5,${W + 5},${H + 5})`];
   const text = "Execute({" + cmds.map(c => '"' + c.replace(/"/g, '""') + '"').join(",") + "})";
   setGgb(text, `<b>${curves.length}</b> 條曲線　共 <b>${terms}</b> 項　指令長 <b>${kb(text.length)}</b>`);
 }
@@ -672,7 +672,7 @@ function encodeGgbDots() {
   const f = Y.map(([u, v, a], i) => (a < 0 ? "-" : (i ? "+" : "")) + Math.abs(a) + (u ? `cos(${u}p(2x+1))` : "") + (v ? `cos(${v}q(2y+1))` : "")).join("") || "0";
   const cmds = [`p=pi/${2 * W}`, `q=pi/${2 * H}`, `f(x,y)=${f}`, `d(x,y)=(${hi}-f(x,y))/${hi - lo}`,
     `L=Flatten(Sequence(Sequence(Circle((m,${H - 1}-n),0.03+0.56abs(d(m,n))^0.75),m,0,${W - 1}),n,0,${H - 1}))`,
-    `SetFilling(L,1)`, `SetColor(L,"Black")`, `SetVisibleInView(f,1,false)`, `SetVisibleInView(d,1,false)`,
+    `SetFilling(L,1)`, `SetColor(L,"Black")`, `ShowLabel(L,false)`, `SetVisibleInView(f,1,false)`, `SetVisibleInView(d,1,false)`,
     `ShowAxes(false)`, `ShowGrid(false)`, `ZoomIn(-2,-2,${W + 1},${H + 1})`];
   const text = "Execute({" + cmds.map(c => '"' + c.replace(/"/g, '""') + '"').join(",") + "})";
   const secs = n * Y.length / 160000;
