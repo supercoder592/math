@@ -79,6 +79,7 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
   <button role="tab" id="tab-vid" aria-selected="false" data-p="p-vid">影片 → 公式</button>
   <button role="tab" id="tab-dec" aria-selected="false" data-p="p-dec">公式 → 還原</button>
   <button role="tab" id="tab-ggb" aria-selected="false" data-p="p-ggb">GeoGebra</button>
+  <button role="tab" id="tab-pos" aria-selected="false" data-p="p-pos">公式海報</button>
 </div>
 
 <section class="panel" id="p-img">
@@ -143,6 +144,23 @@ progress{width:100%;height:8px;accent-color:var(--accent)}
     <button class="btn" id="dec-png" disabled>存成 PNG</button>
     <button class="btn" id="dec-vid" hidden>存成影片</button>
   </div>
+</section>
+
+<section class="panel" id="p-pos" hidden>
+  <div class="controls">
+    <div class="field"><label for="pos-res">解析度（長邊）<output id="pos-res-o"></output></label>
+      <input type="range" id="pos-res" min="48" max="256" step="8" value="192"></div>
+    <div class="field"><label for="pos-terms">公式項數 <output id="pos-terms-o"></output></label>
+      <input type="range" id="pos-terms" min="200" max="12000" step="200" value="6000"></div>
+  </div>
+  <div class="row">
+    <label class="btn primary" for="img-file">選擇照片</label>
+    <button class="btn" id="pos-save">存成 PNG</button>
+    <span class="msg" id="pos-msg">和「圖片 → 公式」用同一張照片。</span>
+  </div>
+  <div class="stats" id="pos-stats"></div>
+  <figure><canvas id="pos-out" width="64" height="64"></canvas><figcaption>上面的圖是用下面印出來的公式逐像素算出來的，公式一項都沒省略</figcaption></figure>
+  <p class="note">每個像素的顏色都是 x、y 的函數：三條餘弦級數 Y、Cb、Cr 算出亮度與色差，再換成 rgb。項數越多越像原圖，公式也越長。</p>
 </section>
 
 <section class="panel" id="p-ggb" hidden>
@@ -341,6 +359,7 @@ const tabs = [...document.querySelectorAll(".tabs button")];
 function showTab(id) {
   tabs.forEach(b => { const on = b.id === id; b.setAttribute("aria-selected", on); $(b.dataset.p).hidden = !on; });
   if (id === "tab-ggb") encodeGgb();
+  if (id === "tab-pos") encodePoster();
 }
 tabs.forEach(b => b.addEventListener("click", () => showTab(b.id)));
 
@@ -380,7 +399,7 @@ bindRange("img-terms", v => v + " 項", scheduleImage);
 $("img-file").addEventListener("change", e => {
   const f = e.target.files[0]; if (!f) return;
   const im = new Image(), url = URL.createObjectURL(f);
-  im.onload = () => { img.source = im; say($("img-msg"), f.name); say($("ggb-msg"), f.name); encodeImage(); if (!$("p-ggb").hidden) encodeGgb(); };
+  im.onload = () => { img.source = im; say($("img-msg"), f.name); say($("ggb-msg"), f.name); say($("pos-msg"), f.name); encodeImage(); if (!$("p-ggb").hidden) encodeGgb(); if (!$("p-pos").hidden) encodePoster(); };
   im.onerror = () => say($("img-msg"), "這個檔案讀不出來，請換一張 JPG 或 PNG。", true);
   im.src = url;
 });
@@ -697,6 +716,72 @@ bindRange("ggb-res", v => v + " 格", scheduleGgb);
 bindRange("ggb-terms", v => v + " 項", scheduleGgb);
 $("ggb-copy").addEventListener("click", () => copyText(ggb.text, $("ggb-msg")));
 $("ggb-save").addEventListener("click", () => saveFile("geogebra-command.txt", new Blob([ggb.text], { type: "text/plain" })));
+
+/* ---------- formula poster: picture on top, the complete pixel formula typeset below ---------- */
+const pos = { timer: 0, ana: null, job: 0 };
+async function encodePoster() {
+  const job = ++pos.job, src = img.source, K = +$("pos-terms").value;
+  const [W, H] = fit(src.width, src.height, Math.min(+$("pos-res").value, Math.max(src.width, src.height)));
+  if (!pos.ana || pos.ana.src !== src || pos.ana.W !== W || pos.ana.H !== H) {
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(src, 0, 0, W, H);
+    const px = g.getImageData(0, 0, W, H).data; pos.ana = { src, W, H, px, a: analyze(px, W, H) };
+  }
+  const fr = pick(pos.ana.a, W, K), out = renderFrame(fr, W, H), px = pos.ana.px;
+  let ae = 0; for (let i = 0; i < px.length; i++) if ((i & 3) !== 3) ae += Math.abs(px[i] - out.data[i]);
+  const sim = 100 * (1 - ae / (W * H * 3) / 255), terms = CH.reduce((s, k) => s + fr[k].length, 0);
+  const serif = '"Times New Roman","Noto Sans TC","PingFang TC",serif';
+  try { await Promise.all([document.fonts.load('15px "Noto Sans TC"', "上圖是一張影像的放大版。對與，第列、行像素的顏色為其中（四捨五入到整數）且"), document.fonts.load('bold 22px "Noto Sans TC"', "公式畫")]); } catch {}
+  if (job !== pos.job) return;
+  const PW = 1600, pad = 48, innerW = PW - 2 * pad, fs = 9, lh = 12.5, hfs = 15, hlh = 24;
+  const m = document.createElement("canvas").getContext("2d"), wc = new Map();
+  const width = (t, font) => { const k = font + t; let w = wc.get(k); if (w === undefined) { m.font = font; w = m.measureText(t).width; wc.set(k, w); } return w; };
+  const fN = `${fs}px ${serif}`, fI = `italic ${fs}px ${serif}`, fH = `${hfs}px ${serif}`, fHI = `italic ${hfs}px ${serif}`;
+  const s = Math.min(innerW / W, 1000 / H), iw = Math.round(W * s), ih = Math.round(H * s);
+  const ops = []; let y = pad + ih + 44;
+  ops.push({ t: "公式畫", f: `bold 22px ${serif}`, x: PW / 2 - width("公式畫", `bold 22px ${serif}`) / 2, y }); y += 34;
+  // header paragraph: runs of [text, italic]
+  const head = [["上圖是一張 " + W + "×" + H + " 影像的放大版。對 ", 0], ["m", 1], [" = 1, 2, …, " + W + " 與 ", 0], ["n", 1], [" = 1, 2, …, " + H + "，第 ", 0], ["n", 1], [" 列、第 ", 0], ["m", 1],
+    [" 行像素的顏色為 rgb( ", 0], ["F", 1], ["(", 0], ["Y", 1], [" + 1.402 ", 0], ["Cr", 1], ["), ", 0], ["F", 1], ["(", 0], ["Y", 1], [" − 0.344 ", 0], ["Cb", 1], [" − 0.714 ", 0], ["Cr", 1], ["), ", 0], ["F", 1], ["(", 0], ["Y", 1], [" + 1.772 ", 0], ["Cb", 1], [") )，其中 ", 0],
+    ["x", 1], [" = (2", 0], ["m", 1], [" − 1)/" + 2 * W + "，", 0], ["y", 1], [" = (2", 0], ["n", 1], [" − 1)/" + 2 * H + "，", 0], ["F", 1], ["(", 0], ["t", 1], [") = min(255, max(0, ", 0], ["t", 1], ["))（四捨五入到整數），且", 0]];
+  let x = pad;
+  for (const [text, it] of head) for (const ch of (it ? [text] : text.match(/[\u3000-\u9fff\uff00-\uffef]|[^\u3000-\u9fff\uff00-\uffef\s]+\s*|\s+/g))) {
+    const f = it ? fHI : fH, w = width(ch, f);
+    if (x + w > PW - pad) { x = pad; y += hlh; }
+    ops.push({ t: ch, f, x, y }); x += w;
+  }
+  y += hlh + 8;
+  // the three series, every term
+  const minus = "−", num = a => String(Math.abs(a));
+  for (const k of CH) {
+    x = pad;
+    const put = (t, it) => { const f = it ? fI : fN; ops.push({ t, f, x, y }); x += width(t, f); };
+    put(k, 1); put("(", 0); put("x", 1); put(", ", 0); put("y", 1); put(") = ", 0);
+    if (!fr[k].length) put("0", 0);
+    fr[k].forEach(([u, v, a], i) => {
+      const runs = [[(i ? (a < 0 ? " " + minus + " " : " + ") : (a < 0 ? minus : "")) + num(a), 0]];
+      if (u) runs.push([" cos(" + (u > 1 ? u : "") + "π", 0], ["x", 1], [")", 0]);
+      if (v) runs.push([" cos(" + (v > 1 ? v : "") + "π", 0], ["y", 1], [")", 0]);
+      const w = runs.reduce((q, [t, it]) => q + width(t, it ? fI : fN), 0);
+      if (x + w > PW - pad) { x = pad + 24; y += lh; }
+      for (const [t, it] of runs) put(t, it);
+    });
+    put(k === "Cr" ? "." : ",", 0); y += lh + 10;
+  }
+  const PH = Math.ceil(y + pad - 10), cv = $("pos-out");
+  if (PW * PH > 16000000) { say($("pos-msg"), "項數太多，海報會超過手機能處理的大小，請把項數調低。", true); return; }
+  cv.width = PW; cv.height = PH;
+  const g = cv.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, PW, PH);
+  const tmp = document.createElement("canvas"); tmp.width = W; tmp.height = H; tmp.getContext("2d").putImageData(out, 0, 0);
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high"; g.drawImage(tmp, Math.round((PW - iw) / 2), pad, iw, ih);
+  g.fillStyle = "#000"; g.textBaseline = "alphabetic"; let cur = "";
+  for (const o of ops) { if (o.f !== cur) g.font = cur = o.f; g.fillText(o.t, o.x, o.y); }
+  $("pos-stats").innerHTML = `<b>${W}×${H}</b> 像素　<b>${terms}</b> 項（全部印在海報上）　與原圖相似度 <b>${sim.toFixed(1)}%</b>　海報 <b>${PW}×${PH}</b>`;
+}
+function schedulePoster() { clearTimeout(pos.timer); pos.timer = setTimeout(encodePoster, 200); }
+bindRange("pos-res", v => v + " px", schedulePoster);
+bindRange("pos-terms", v => v + " 項", schedulePoster);
+$("pos-save").addEventListener("click", () => $("pos-out").toBlob(b => saveFile("formula-poster.png", b), "image/png"));
 
 /* ---------- video -> formula ---------- */
 const vid = { text: "", busy: false };
